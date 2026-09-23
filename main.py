@@ -3,6 +3,29 @@ import time
 import os, shutil
 import subprocess
 import glob
+import tarfile
+
+ARCH = "x64"
+
+DOWNLOAD_PATH = "tmp"
+
+ELECTRON_VERSION = "22.3.27"
+ELECTRON_FILE_NAME = f"electron-v{ELECTRON_VERSION}-linux-{ARCH}.zip"
+ELECTRON_DOWNLOAD_LINK = f"https://github.com/electron/electron/releases/download/v{ELECTRON_VERSION}/{ELECTRON_FILE_NAME}"
+
+ZALO_DOWNLOAD = "https://zalo.me/download/zalo-pc?utm=90000"
+
+SQLITE3_VERSION = "6.0.1"
+SQLITE3_FILE_NAME = f"sqlite3-v{SQLITE3_VERSION}-napi-v6-linux-{ARCH}.tar.gz"
+SQLITE3_DOWNLOAD_LINK =  f"https://github.com/TryGhost/node-sqlite3/releases/download/v{SQLITE3_VERSION}/{SQLITE3_FILE_NAME}"
+
+
+headers = {
+    "User-Agent": (
+        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
+    )
+}
+
 def format_time(secs):
     secs =int(secs)
 
@@ -107,21 +130,7 @@ def extract(archive_path, extract_path):
         print()
         raise RuntimeError(f"7z extraction failed: {archive_path}")
 
-ARCH = "x64"
 
-DOWNLOAD_PATH = "tmp"
-
-ELECTRON_VERSION = "v22.3.27"
-ELECTRON_FILE_NAME = f"electron-{ELECTRON_VERSION}-linux-{ARCH}.zip"
-ELECTRON_DOWNLOAD_LINK = f"https://github.com/electron/electron/releases/download/{ELECTRON_VERSION}/{ELECTRON_FILE_NAME}"
-
-ZALO_DOWNLOAD = "https://zalo.me/download/zalo-pc?utm=90000"
-
-headers = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
-    )
-}
 
 if os.path.exists(DOWNLOAD_PATH):
     shutil.rmtree(DOWNLOAD_PATH)
@@ -143,9 +152,27 @@ zalo_down_fl= response.headers.get("Location")
 
 down_file(ELECTRON_DOWNLOAD_LINK, ELECTRON_FILE_NAME, DOWNLOAD_PATH)
 down_file(zalo_down_fl, "ZaloSetup.dmg", DOWNLOAD_PATH)
+down_file(SQLITE3_DOWNLOAD_LINK, SQLITE3_FILE_NAME, DOWNLOAD_PATH)
 
 extract(f"{DOWNLOAD_PATH}/{ELECTRON_FILE_NAME}", f"{DOWNLOAD_PATH}/electron")
 extract(f"{DOWNLOAD_PATH}/ZaloSetup.dmg", f"{DOWNLOAD_PATH}/zalo")
+
+sqlite3_archive = f"{DOWNLOAD_PATH}/{SQLITE3_FILE_NAME}"
+sqlite3_extract_path = f"{DOWNLOAD_PATH}/sqlite3"
+os.makedirs(sqlite3_extract_path, exist_ok=True)
+with tarfile.open(sqlite3_archive, "r:gz") as archive:
+    extract_root = os.path.realpath(sqlite3_extract_path)
+    for member in archive.getmembers():
+        member_path = os.path.realpath(
+            os.path.join(sqlite3_extract_path, member.name)
+        )
+        if os.path.commonpath((extract_root, member_path)) != extract_root:
+            raise RuntimeError(
+                f"Refusing to extract sqlite3 archive member outside {extract_root}: "
+                f"{member.name}"
+            )
+    archive.extractall(sqlite3_extract_path)
+
 
 ELECTRON_DIR = f"{DOWNLOAD_PATH}/electron/resources"
 
@@ -159,7 +186,14 @@ for path in matches:
 
 os.remove(f"{ELECTRON_DIR}/default_app.asar")
 
-FLF_CP = ["app.asar", "app-update.yml", "app.asar.unpacked"]
-
-for d in FLF_CP:
+for d in ("app.asar", "app-update.yml", "app.asar.unpacked"):
     shutil.move(f"{ZALO_DIR}/{d}", ELECTRON_DIR)
+
+ELECTRON_NATIVELIBS_DIR = f"{ELECTRON_DIR}/app.asar.unpacked/native/nativelibs"
+
+sqlite3_binary = glob.glob(f"{sqlite3_extract_path}/**/node_sqlite3.node", recursive=True)
+if len(sqlite3_binary) != 1:
+    raise FileNotFoundError(f"seems not right?")
+SQLITE3_NAPIV6_DIR = f"{ELECTRON_NATIVELIBS_DIR}/sqlite3/binding/napi-v6-linux-{ARCH}"
+os.mkdir(SQLITE3_NAPIV6_DIR)
+shutil.copy2(sqlite3_binary[0], SQLITE3_NAPIV6_DIR)
