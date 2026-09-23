@@ -129,6 +129,7 @@ def down_file(url, out_name, out_path, chunk_size=1024 * 64):
         ldownd = downd
 
     print(f"\nTải xong {out_name}.")
+    return os.path.join(out_path, out_name)
 
 def extract(archive_path, extract_path):
     os.makedirs(extract_path, exist_ok=True)
