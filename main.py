@@ -27,16 +27,44 @@ headers = {
 }
 
 def format_time(secs):
-    secs =int(secs)
+    secs = int(secs)
 
-    hs, secs = divmod(secs, 3600)
+    hours, secs = divmod(secs, 3600)
     mins, secs = divmod(secs, 60)
-    if hs:
-        return f"{hs}h {mins:02d}m {secs:02d}s"
+
+    if hours:
+        return f"{hours}h {mins:02d}m {secs:02d}s"
+
     if mins:
         return f"{mins}m {secs:02d}s"
+
     return f"{secs}s"
 
+
+def run_command(cmd, cwd=None):
+    print()
+    print("$", " ".join(map(str, cmd)))
+
+    process = subprocess.Popen(
+        cmd,
+        cwd=cwd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+
+    if process.stdout:
+        for line in process.stdout:
+            print(line, end="")
+
+    code = process.wait()
+
+    if code != 0:
+        raise RuntimeError(
+            f"Command failed with exit code {code}: "
+            f"{' '.join(map(str, cmd))}"
+        )
 def down_file(url, out_name, out_path, chunk_size=1024 * 64):
     res = requests.get(url, stream=True)
     res.raise_for_status()
@@ -101,6 +129,7 @@ def down_file(url, out_name, out_path, chunk_size=1024 * 64):
         ldownd = downd
 
     print(f"\nTải xong {out_name}.")
+
 def extract(archive_path, extract_path):
     os.makedirs(extract_path, exist_ok=True)
 
@@ -130,70 +159,197 @@ def extract(archive_path, extract_path):
         print()
         raise RuntimeError(f"7z extraction failed: {archive_path}")
 
-
-
-if os.path.exists(DOWNLOAD_PATH):
-    shutil.rmtree(DOWNLOAD_PATH)
-
-os.mkdir(DOWNLOAD_PATH)
-
-print("Lấy link download ...")
-
-response = requests.get(
-    ZALO_DOWNLOAD,
-    headers=headers,
-    timeout=30,
-    allow_redirects=False,
-)
-
-response.raise_for_status()
-
-zalo_down_fl= response.headers.get("Location")
-
-down_file(ELECTRON_DOWNLOAD_LINK, ELECTRON_FILE_NAME, DOWNLOAD_PATH)
-down_file(zalo_down_fl, "ZaloSetup.dmg", DOWNLOAD_PATH)
-down_file(SQLITE3_DOWNLOAD_LINK, SQLITE3_FILE_NAME, DOWNLOAD_PATH)
-
-extract(f"{DOWNLOAD_PATH}/{ELECTRON_FILE_NAME}", f"{DOWNLOAD_PATH}/electron")
-extract(f"{DOWNLOAD_PATH}/ZaloSetup.dmg", f"{DOWNLOAD_PATH}/zalo")
-
-sqlite3_archive = f"{DOWNLOAD_PATH}/{SQLITE3_FILE_NAME}"
-sqlite3_extract_path = f"{DOWNLOAD_PATH}/sqlite3"
-os.makedirs(sqlite3_extract_path, exist_ok=True)
-with tarfile.open(sqlite3_archive, "r:gz") as archive:
-    extract_root = os.path.realpath(sqlite3_extract_path)
-    for member in archive.getmembers():
-        member_path = os.path.realpath(
-            os.path.join(sqlite3_extract_path, member.name)
+def check_asar():
+    try:
+        subprocess.run(
+            [
+                "npx",
+                "@electron/asar",
+                "--version",
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
         )
-        if os.path.commonpath((extract_root, member_path)) != extract_root:
-            raise RuntimeError(
-                f"Refusing to extract sqlite3 archive member outside {extract_root}: "
-                f"{member.name}"
+    except (FileNotFoundError, subprocess.CalledProcessError ):
+        raise RuntimeError( "where's asar bro?" )
+
+
+def extract_asar( asar_path,output_dir):
+    print("Extract app.asar")
+
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+
+    run_command(
+        [
+            "npx",
+            "@electron/asar",
+            "extract",
+            asar_path,
+            output_dir,
+        ]
+    )
+
+
+def pack_asar(source_dir,asar_path,):
+    print("Pack app.asar")
+
+    if os.path.exists(asar_path):
+        os.remove(asar_path)
+
+    run_command(
+        [
+            "npx",
+            "@electron/asar",
+            "pack",
+            source_dir,
+            asar_path,
+        ]
+    )
+
+
+def extract_tar_gz(file_path,out_path):
+    if os.path.exists(out_path):
+        shutil.rmtree(out_path)
+
+    os.makedirs(
+        out_path,
+        exist_ok=True,
+    )
+
+    with tarfile.open(file_path, "r:gz") as archive:
+        root = os.path.realpath(out_path)
+
+        for member in archive.getmembers():
+            target = os.path.realpath(
+                os.path.join(out_path, member.name)
             )
-    archive.extractall(sqlite3_extract_path)
+
+            if os.path.commonpath([root, target]) != root:
+                raise RuntimeError(f"Unsafe tar member: {member.name}")
+
+        archive.extractall(out_path )
+
+def find_zalo_resources(zalo_extract_path,):
+    matches = glob.glob(os.path.join(zalo_extract_path,"*-universal",))
+
+    for path in matches:
+        if not os.path.isdir(path):
+            continue
+
+        if not os.path.basename(path).startswith("Zalo "):
+            continue
+
+        resources = os.path.join(path, "Zalo.app", "Contents", "Resources",)
+
+        if os.path.isdir(resources):
+            return resources
+
+    raise FileNotFoundError("uh where are resources")
 
 
-ELECTRON_DIR = f"{DOWNLOAD_PATH}/electron/resources"
+def install_native_sqlite3(sqlite3_extract_path,app_source_dir):
 
-matches = glob.glob(f"{DOWNLOAD_PATH}/zalo/*-universal")
+    binaries = glob.glob(
+        os.path.join( sqlite3_extract_path,"**", "node_sqlite3.node"),
+        recursive=True,
+    )
 
-ZALO_DIR = ""
-for path in matches:
-    if os.path.isdir(path) and os.path.basename(path).startswith("Zalo ") :
-        ZALO_DIR = f"{path}/Zalo.app/Contents/Resources"
-        break
+    if len(binaries) != 1:
+        raise FileNotFoundError("uh how???")
 
-os.remove(f"{ELECTRON_DIR}/default_app.asar")
+    source = binaries[0]
 
-for d in ("app.asar", "app-update.yml", "app.asar.unpacked"):
-    shutil.move(f"{ZALO_DIR}/{d}", ELECTRON_DIR)
+    destination_dir = os.path.join(
+        app_source_dir,
+        "native",
+        "nativelibs",
+        "sqlite3",
+        "binding",
+        f"napi-v6-linux-{ARCH}",
+    )
 
-ELECTRON_NATIVELIBS_DIR = f"{ELECTRON_DIR}/app.asar.unpacked/native/nativelibs"
+    os.makedirs(
+        destination_dir,
+        exist_ok=True,
+    )
 
-sqlite3_binary = glob.glob(f"{sqlite3_extract_path}/**/node_sqlite3.node", recursive=True)
-if len(sqlite3_binary) != 1:
-    raise FileNotFoundError(f"seems not right?")
-SQLITE3_NAPIV6_DIR = f"{ELECTRON_NATIVELIBS_DIR}/sqlite3/binding/napi-v6-linux-{ARCH}"
-os.mkdir(SQLITE3_NAPIV6_DIR)
-shutil.copy2(sqlite3_binary[0], SQLITE3_NAPIV6_DIR)
+    moveto = os.path.join(destination_dir, "node_sqlite3.node" )
+
+    print("Installing sqlite3")
+
+    shutil.copy2(source, moveto)
+
+
+def main():
+
+    if os.path.exists(DOWNLOAD_PATH):
+        shutil.rmtree(DOWNLOAD_PATH)
+
+    os.makedirs(DOWNLOAD_PATH,exist_ok=True)
+    check_asar()
+
+    print("Getting URL...")
+
+    res = requests.get(ZALO_DOWNLOAD,headers=headers, timeout=30, allow_redirects=False,)
+
+    res.raise_for_status()
+
+    zalo_url = res.headers.get("Location")
+
+    if not zalo_url:
+        raise RuntimeError("url not found")
+
+    electron_zip = down_file(ELECTRON_DOWNLOAD_LINK, ELECTRON_FILE_NAME, DOWNLOAD_PATH)
+    zalo_zip = down_file(zalo_url,"ZaloSetup.dmg", DOWNLOAD_PATH)
+
+
+    sql3_zip = down_file(SQLITE3_DOWNLOAD_LINK,SQLITE3_FILE_NAME, DOWNLOAD_PATH)
+
+
+    electron_dir = os.path.join(DOWNLOAD_PATH, "electron")
+    extract(electron_zip, electron_dir)
+
+    zalo_dir = os.path.join(DOWNLOAD_PATH, "zalo")
+    extract( zalo_zip,zalo_dir)
+
+    sqlite3_dir = os.path.join( DOWNLOAD_PATH,"sqlite3")
+    extract_tar_gz(sql3_zip, sqlite3_dir)
+
+    electron_res = os.path.join(electron_dir, "resources",)
+
+    if not os.path.isdir(electron_res):
+        raise FileNotFoundError(electron_res)
+
+    zalo_res = find_zalo_resources(zalo_dir)
+
+    original_asar = os.path.join(zalo_res,"app.asar",)
+
+    if not os.path.isfile( original_asar):
+        raise FileNotFoundError( original_asar)
+
+    default_app = os.path.join(electron_res,"default_app.asar",)
+
+    if os.path.exists(default_app ):
+        print("Removing default_app.asar" )
+
+        os.remove( default_app)
+
+
+    app_source_dir = os.path.join( DOWNLOAD_PATH, "zalo-app")
+
+    extract_asar( original_asar,app_source_dir)
+
+
+    install_native_sqlite3(sqlite3_dir, app_source_dir)
+
+    output_asar = os.path.join(electron_res,"app.asar")
+
+    pack_asar(app_source_dir,output_asar,)
+
+    print("DONE")
+
+
+if __name__ == "__main__":
+    main()
