@@ -1,5 +1,4 @@
 .venv
 tmp
-
 **/node_modules
 **/build

@@ -286,7 +286,7 @@ def install_native_sqlite3(sqlite3_extract_path,app_source_dir):
     shutil.copy2(source, moveto)
 
 def build_db_cross_v4(app_source_dir):
-    run_command(["./db-cross-build/build.sh"])
+    run_command(["./db-cross-build/build.sh", ELECTRON_VERSION, ARCH])
     db_cross_build_dir = os.path.join(DB_CROSS_DIR, "build", "Release")
     db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "db-cross-v4")
     db_cross_native_node_dir = os.path.join(db_cross_lib_dir, "prebuilt", "linux", "electron", ARCH)
@@ -313,6 +313,57 @@ else {
 }
 module.exports = addon;""")
 
+def patch_windows_titlebar(app_source_dir):
+    """
+    Make Zalo's renderer use its Windows titlebar implementation.
+    This gives us Zalo's own minimize/maximize/close controls.
+    """
+    patched = 0
+
+    for root, _, files in os.walk(app_source_dir):
+        for name in files:
+            if not name.endswith(".js"):
+                continue
+
+            path = os.path.join(root, name)
+
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = f.read()
+            except (UnicodeDecodeError, OSError):
+                continue
+
+            original = data
+
+            # Zalo's renderer normally selects the macOS/Linux titlebar
+            # based on the platform identifier.
+            data = data.replace(
+                'platform:"DARWIN"',
+                'platform:"WIN32"',
+            )
+
+            # Zalo client type:
+            #   23 = macOS
+            #   24 = Windows
+            data = data.replace(
+                "getClientType(){return 23}",
+                "getClientType(){return 24}",
+            )
+
+            if data != original:
+                with open(path, "w", encoding="utf-8") as f:
+                    f.write(data)
+
+                patched += 1
+                print(f"Patched titlebar: {path}")
+
+    if patched == 0:
+        raise RuntimeError(
+            "Could not find Zalo's titlebar platform code. "
+            "Zalo's JS layout may have changed."
+        )
+
+    print(f"Titlebar patch complete: {patched} file(s)")
 def main():
 
     if os.path.exists(DOWNLOAD_PATH):
@@ -337,12 +388,8 @@ def main():
 
 
     sql3_zip = down_file(SQLITE3_DOWNLOAD_LINK,SQLITE3_FILE_NAME, DOWNLOAD_PATH)
-
-
     
     extract(electron_zip, ELECTRON_DIR)
-
-    
     extract( zalo_zip,ZALO_DIR)
 
     sqlite3_dir = os.path.join( DOWNLOAD_PATH,"sqlite3")
@@ -370,6 +417,7 @@ def main():
     app_source_dir = os.path.join( DOWNLOAD_PATH, "zalo-app")
 
     extract_asar( original_asar,app_source_dir)
+    patch_windows_titlebar(app_source_dir)
     install_native_sqlite3(sqlite3_dir, app_source_dir)
     build_db_cross_v4(app_source_dir)
 
