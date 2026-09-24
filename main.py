@@ -13,13 +13,16 @@ ELECTRON_VERSION = "22.3.27"
 ELECTRON_FILE_NAME = f"electron-v{ELECTRON_VERSION}-linux-{ARCH}.zip"
 ELECTRON_DOWNLOAD_LINK = f"https://github.com/electron/electron/releases/download/v{ELECTRON_VERSION}/{ELECTRON_FILE_NAME}"
 
+ELECTRON_DIR = os.path.join(DOWNLOAD_PATH, "electron")
+
 ZALO_DOWNLOAD = "https://zalo.me/download/zalo-pc?utm=90000"
+ZALO_DIR = os.path.join(DOWNLOAD_PATH, "zalo")
 
 SQLITE3_VERSION = "6.0.1"
 SQLITE3_FILE_NAME = f"sqlite3-v{SQLITE3_VERSION}-napi-v6-linux-{ARCH}.tar.gz"
 SQLITE3_DOWNLOAD_LINK =  f"https://github.com/TryGhost/node-sqlite3/releases/download/v{SQLITE3_VERSION}/{SQLITE3_FILE_NAME}"
 
-
+DB_CROSS_DIR = "db-cross-build"
 headers = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
@@ -282,6 +285,33 @@ def install_native_sqlite3(sqlite3_extract_path,app_source_dir):
 
     shutil.copy2(source, moveto)
 
+def build_db_cross_v4(app_source_dir):
+    run_command(["./db-cross-build/build.sh"])
+    db_cross_build_dir = os.path.join(DB_CROSS_DIR, "build", "Release")
+    db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "db-cross-v4")
+    db_cross_native_node_dir = os.path.join(db_cross_lib_dir, "prebuilt", "linux", "electron", ARCH)
+    os.makedirs(db_cross_native_node_dir)
+    shutil.copy2(os.path.join(db_cross_build_dir, "db-cross-v4-native.node"), db_cross_native_node_dir)
+
+    with open(os.path.join(db_cross_lib_dir, "dist", "binding.js"), "w") as f:
+        f.write(r""""use strict";
+// @ts-ignore
+let addon;
+if (process.platform === 'darwin') {
+    addon = require(`../prebuilt/darwin/electron/${process.arch}/db-cross-v4-native.node`);
+}
+else if (process.platform=== 'linux') {
+    addon = require(`../prebuilt/linux/electron/${process.arch}/db-cross-v4-native.node`);
+}
+else {
+    if (process.arch === 'x64') {
+        addon = require('../prebuilt/window/electron_x86_64/db-cross-v4-native.node');
+    }
+    else {
+        addon = require('../prebuilt/window/electron_x86/db-cross-v4-native.node');
+    }
+}
+module.exports = addon;""")
 
 def main():
 
@@ -309,21 +339,21 @@ def main():
     sql3_zip = down_file(SQLITE3_DOWNLOAD_LINK,SQLITE3_FILE_NAME, DOWNLOAD_PATH)
 
 
-    electron_dir = os.path.join(DOWNLOAD_PATH, "electron")
-    extract(electron_zip, electron_dir)
+    
+    extract(electron_zip, ELECTRON_DIR)
 
-    zalo_dir = os.path.join(DOWNLOAD_PATH, "zalo")
-    extract( zalo_zip,zalo_dir)
+    
+    extract( zalo_zip,ZALO_DIR)
 
     sqlite3_dir = os.path.join( DOWNLOAD_PATH,"sqlite3")
     extract_tar_gz(sql3_zip, sqlite3_dir)
 
-    electron_res = os.path.join(electron_dir, "resources",)
+    electron_res = os.path.join(ELECTRON_DIR, "resources",)
 
     if not os.path.isdir(electron_res):
         raise FileNotFoundError(electron_res)
 
-    zalo_res = find_zalo_resources(zalo_dir)
+    zalo_res = find_zalo_resources(ZALO_DIR)
 
     original_asar = os.path.join(zalo_res,"app.asar",)
 
@@ -334,16 +364,14 @@ def main():
 
     if os.path.exists(default_app ):
         print("Removing default_app.asar" )
-
         os.remove( default_app)
 
 
     app_source_dir = os.path.join( DOWNLOAD_PATH, "zalo-app")
 
     extract_asar( original_asar,app_source_dir)
-
-
     install_native_sqlite3(sqlite3_dir, app_source_dir)
+    build_db_cross_v4(app_source_dir)
 
     output_asar = os.path.join(electron_res,"app.asar")
 
