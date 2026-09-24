@@ -4,6 +4,8 @@ import os, shutil
 import subprocess
 import glob
 import tarfile
+import re
+from pathlib import Path
 
 ARCH = "x64"
 
@@ -314,56 +316,70 @@ else {
 module.exports = addon;""")
 
 def patch_windows_titlebar(app_source_dir):
-    """
-    Make Zalo's renderer use its Windows titlebar implementation.
-    This gives us Zalo's own minimize/maximize/close controls.
-    """
-    patched = 0
+    pc_dist = Path(app_source_dir) / "pc-dist"
 
-    for root, _, files in os.walk(app_source_dir):
-        for name in files:
-            if not name.endswith(".js"):
-                continue
+    NULL_ANCHOR = 'STR_NEW_VER"})))):null))'
+    DONE_MARKER = 'fa-Lock_24_Line btn titlebar__menu__btn'
+    DARWIN_CLASS = '?" locked ":"")+"DARWIN"'
+    WIN32_CLASS = '?" locked ":"")+"WIN32"'
 
-            path = os.path.join(root, name)
+    def list_bundles(directory):
+        for path in directory.iterdir():
+            if path.is_file() and path.suffix == ".js":
+                yield path
+            elif path.is_dir() and path.name == "lazy":
+                yield from list_bundles(path)
 
-            try:
-                with open(path, "r", encoding="utf-8") as f:
-                    data = f.read()
-            except (UnicodeDecodeError, OSError):
-                continue
+    def build_controls(template, react, style, suffix):
+        return template.replace("r.a.createElement", f"{react}.a.createElement").replace(",style:t}", f",style:{style}}}").replace("${s}", f"${{{suffix}}}")
 
-            original = data
+    def patch_file(file, template):
+        source = file.read_text(encoding="utf-8")
 
-            # Zalo's renderer normally selects the macOS/Linux titlebar
-            # based on the platform identifier.
-            data = data.replace(
-                'platform:"DARWIN"',
-                'platform:"WIN32"',
-            )
+        if 'id:"titleBar"' not in source:
+            return "skip"
+        if DONE_MARKER in source:
+            return "already"
+        if NULL_ANCHOR not in source:
+            raise RuntimeError(f"{file.name}: titlebar found but null anchor is missing")
 
-            # Zalo client type:
-            #   23 = macOS
-            #   24 = Windows
-            data = data.replace(
-                "getClientType(){return 23}",
-                "getClientType(){return 24}",
-            )
+        def match(pattern):
+            m = re.search(pattern, source)
+            return m.group(1) if m else None
 
-            if data != original:
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(data)
+        react = match(r'([A-Za-z_$][\w$]*)\.a\.createElement\("div",\{id:"titleBar"' )
+        style = match( r'titlebar__btns clickable",style:([A-Za-z_$][\w$]*)\}' )
+        suffix = match(r'\.c,\{className:([A-Za-z_$][\w$]*)\}\)')
 
-                patched += 1
-                print(f"Patched titlebar: {path}")
+        if not all((react, style, suffix)):
+            raise RuntimeError(f"{file.name}: failed to detect react={react}, style={style}, suffix={suffix}" )
 
-    if patched == 0:
-        raise RuntimeError(
-            "Could not find Zalo's titlebar platform code. "
-            "Zalo's JS layout may have changed."
-        )
+        controls = build_controls(template, react, style, suffix)
 
-    print(f"Titlebar patch complete: {patched} file(s)")
+        source = source.replace( NULL_ANCHOR,'STR_NEW_VER"})))):' + controls,1)
+        source = source.replace(DARWIN_CLASS, WIN32_CLASS, 1)
+        source = source.replace("`title-name + macos ${", "`title-name + ${")
+
+        file.write_text(source, encoding="utf-8")
+        return "patched"
+
+    template = r'''r.a.createElement("div",{className:"titlebar__btns"+(this.state.isMaximized?" is-maximized":""),style:t},this.props.isPopupWindow||!this.props.status||this.props.status.isAppLock?null:r.a.createElement("i",{className:`fa fa-Lock_24_Line btn titlebar__menu__btn ${s}`,onClick:this._showAppLock.bind(this)}),r.a.createElement("i",{className:`fa fa-Minus_24_Line btn titlebar__menu__btn ${s}`,onClick:this.minimize.bind(this)}),this.props.hideMaximize?null:this.state.isMaximized?r.a.createElement("i",{className:`fa fa-Maximize_24_Line btn titlebar__menu__btn ${s}`,onClick:this.maximize.bind(this)}):r.a.createElement("i",{className:`fa fa-Minimize_24_Line btn titlebar__menu__btn ${s}`,onClick:this.maximize.bind(this)}),!this.props.hideClose&&r.a.createElement("i",{className:`fa fa-Close_24_Line btn titlebar__menu__btn ${s}`,onClick:this.quit.bind(this)}))))'''
+
+    counts = {"patched": 0, "already": 0}
+
+    for file in list_bundles(pc_dist):
+        result = patch_file(file, template)
+        if result in counts:
+            counts[result] += 1
+            if result == "patched":
+                print(f"  titlebar controls -> {file.name}")
+
+    hosts = counts["patched"] + counts["already"]
+
+    if not hosts:
+        raise RuntimeError("no bundle contains the title bar component")
+
+    print(f"[+] titlebar controls: {counts['patched']} patched, {counts['already']} already (of {hosts} title-bar bundles)")
 def main():
 
     if os.path.exists(DOWNLOAD_PATH):
