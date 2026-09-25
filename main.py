@@ -287,8 +287,8 @@ def install_native_sqlite3(sqlite3_extract_path,app_source_dir):
     shutil.copy2(source, moveto)
 
 def build_db_cross_v4(app_source_dir):
-    run_command(["./db-cross-build/build.sh", ELECTRON_VERSION, ARCH])
-    db_cross_build_dir = os.path.join("db-cross-build", "build", "Release")
+    run_command(["./native/db-cross-v4/build.sh", ELECTRON_VERSION, ARCH])
+    db_cross_build_dir = os.path.join("native", "db-cross-v4", "build", "Release")
     db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "db-cross-v4")
     db_cross_native_node_dir = os.path.join(db_cross_lib_dir, "prebuilt", "linux", "electron", ARCH)
     os.makedirs(db_cross_native_node_dir)
@@ -300,11 +300,9 @@ def build_db_cross_v4(app_source_dir):
 let addon;
 if (process.platform === 'darwin') {
     addon = require(`../prebuilt/darwin/electron/${process.arch}/db-cross-v4-native.node`);
-}
-else if (process.platform=== 'linux') {
+}else if (process.platform=== 'linux') {
     addon = require(`../prebuilt/linux/electron/${process.arch}/db-cross-v4-native.node`);
-}
-else {
+} else {
     if (process.arch === 'x64') {
         addon = require('../prebuilt/window/electron_x86_64/db-cross-v4-native.node');
     }
@@ -315,8 +313,8 @@ else {
 module.exports = addon;""")
 
 def build_zimage(app_source_dir):
-    run_command(["./zimage-build/build.sh", ELECTRON_VERSION, ARCH])
-    db_cross_build_dir = os.path.join("zimage-build", "build", "Release")
+    run_command(["./native/zimage/build.sh", ELECTRON_VERSION, ARCH])
+    db_cross_build_dir = os.path.join("native", "zimage", "build", "Release")
     db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "zimage")
     db_cross_native_node_dir = os.path.join(db_cross_lib_dir, f"linux-{ARCH}")
     os.makedirs(db_cross_native_node_dir)
@@ -330,7 +328,7 @@ def build_zimage(app_source_dir):
         re.DOTALL
     )
 
-    replacement = """function getOS() {
+    replacement = r"""function getOS() {
     if (process.platform === 'win32') {
         os = 'ia32';
     } else if (process.platform === 'darwin') {
@@ -339,7 +337,7 @@ def build_zimage(app_source_dir):
         } else {
             os = 'darwin_x64';
         }
-    } else if (process.platform === 'linux') {
+    }else if (process.platform === 'linux') {
         if (process.arch === 'arm64') {
             os = 'linux_arm64';
         } else {
@@ -356,6 +354,34 @@ def build_zimage(app_source_dir):
     path.write_text(source, encoding="utf-8")
     print(f"[*] Patched {path}")
 
+def build_zjxl(app_source_dir):
+    run_command(["./native/zjxl/build.sh", ELECTRON_VERSION, ARCH])
+    db_cross_build_dir = os.path.join("native", "zjxl", "build", "Release")
+    db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "zjxl")
+    db_cross_native_node_dir = os.path.join(db_cross_lib_dir, "build", f"linux-{ARCH}")
+    os.makedirs(db_cross_native_node_dir)
+    shutil.copy2(os.path.join(db_cross_build_dir, "zjxl.node"), os.path.join(db_cross_native_node_dir, "jxl.node"))
+
+    path = Path(db_cross_lib_dir) / "index.js"
+    text = path.read_text()
+
+    old = """  } else {
+    return { error: 'not support' };
+  }"""
+
+    new = """  } else if (process.platform === 'linux'){
+    if (process.arch === 'arm64') nodeAddon = require('./build/linux_arm64/jxl.node');
+    else nodeAddon = require('./build/linux_x64/jxl.node');
+  } else {
+    return { error: 'not support' };
+  }"""
+
+    if old not in text:
+        raise RuntimeError("Target block not found in index.js")
+
+    path.write_text(text.replace(old, new, 1))
+
+    print(f"Updated {path}")
 
 def patch_windows_titlebar(app_source_dir):
     pc_dist = Path(app_source_dir) / "pc-dist"
@@ -495,12 +521,13 @@ def main():
     install_native_sqlite3(sqlite3_dir, app_source_dir)
     build_db_cross_v4(app_source_dir)
     build_zimage(app_source_dir)
+    build_zjxl(app_source_dir)
 
     output_asar = os.path.join(electron_res,"app.asar")
 
     pack_asar(app_source_dir,output_asar)
 
-    print("DONE")
+    print(f"done")
 
 
 if __name__ == "__main__":

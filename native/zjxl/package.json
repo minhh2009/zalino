@@ -1,0 +1,13 @@
+{
+  "name": "re-impl-zjxl-cpp",
+  "version": "1.0.0",
+  "description": "c++ reimplementation of zjxl",
+  "main": "index.js",
+  "scripts": {
+    "build": "node-gyp configure build"
+  },
+  "dependencies": {
+    "node-addon-api": "^5.1.0",
+    "node-gyp": "^10.0.0"
+  }
+}
