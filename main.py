@@ -11,7 +11,7 @@ ARCH = "x64"
 
 DOWNLOAD_PATH = "tmp"
 
-ELECTRON_VERSION = "22.3.27"
+ELECTRON_VERSION = "39.8.10"
 ELECTRON_FILE_NAME = f"electron-v{ELECTRON_VERSION}-linux-{ARCH}.zip"
 ELECTRON_DOWNLOAD_LINK = f"https://github.com/electron/electron/releases/download/v{ELECTRON_VERSION}/{ELECTRON_FILE_NAME}"
 
@@ -380,6 +380,21 @@ def patch_windows_titlebar(app_source_dir):
         raise RuntimeError("no bundle contains the title bar component")
 
     print(f"[+] titlebar controls: {counts['patched']} patched, {counts['already']} already (of {hosts} title-bar bundles)")
+
+def patch_nofuncs(app_source_dir):
+    p = Path(app_source_dir)/"main-dist"/"main.js"
+    s = p.read_text()
+
+    old = "Ae.webContents.incrementCapturerCount()"
+    new = "typeof Ae.webContents.incrementCapturerCount==='function'&&Ae.webContents.incrementCapturerCount()"
+
+    if old not in s:
+        raise SystemExit("target not found")
+
+    s = s.replace(old, new, 1)
+    p.write_text(s)
+
+    print("patched")
 def main():
 
     if os.path.exists(DOWNLOAD_PATH):
@@ -390,14 +405,13 @@ def main():
 
     print("Getting URL...")
 
-    res = requests.get(ZALO_DOWNLOAD,headers=headers, timeout=30, allow_redirects=False,)
-
+    res = requests.get(ZALO_DOWNLOAD,headers=headers, timeout=30, allow_redirects=False)
     res.raise_for_status()
 
     zalo_url = res.headers.get("Location")
 
     if not zalo_url:
-        raise RuntimeError("url not found")
+        raise RuntimeError("zalo url not found")
 
     electron_zip = down_file(ELECTRON_DOWNLOAD_LINK, ELECTRON_FILE_NAME, DOWNLOAD_PATH)
     zalo_zip = down_file(zalo_url,"ZaloSetup.dmg", DOWNLOAD_PATH)
@@ -411,19 +425,19 @@ def main():
     sqlite3_dir = os.path.join( DOWNLOAD_PATH,"sqlite3")
     extract_tar_gz(sql3_zip, sqlite3_dir)
 
-    electron_res = os.path.join(ELECTRON_DIR, "resources",)
+    electron_res = os.path.join(ELECTRON_DIR, "resources")
 
     if not os.path.isdir(electron_res):
         raise FileNotFoundError(electron_res)
 
     zalo_res = find_zalo_resources(ZALO_DIR)
 
-    original_asar = os.path.join(zalo_res,"app.asar",)
+    original_asar = os.path.join(zalo_res,"app.asar")
 
     if not os.path.isfile( original_asar):
         raise FileNotFoundError( original_asar)
 
-    default_app = os.path.join(electron_res,"default_app.asar",)
+    default_app = os.path.join(electron_res,"default_app.asar")
 
     if os.path.exists(default_app ):
         print("Removing default_app.asar" )
@@ -433,13 +447,15 @@ def main():
     app_source_dir = os.path.join( DOWNLOAD_PATH, "zalo-app")
 
     extract_asar( original_asar,app_source_dir)
+
+    patch_nofuncs(app_source_dir)
     patch_windows_titlebar(app_source_dir)
     install_native_sqlite3(sqlite3_dir, app_source_dir)
     build_db_cross_v4(app_source_dir)
 
     output_asar = os.path.join(electron_res,"app.asar")
 
-    pack_asar(app_source_dir,output_asar,)
+    pack_asar(app_source_dir,output_asar)
 
     print("DONE")
 
