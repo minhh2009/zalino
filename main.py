@@ -11,7 +11,7 @@ ARCH = "x64"
 
 DOWNLOAD_PATH = "tmp"
 
-ELECTRON_VERSION = "39.8.10"
+ELECTRON_VERSION = "22.3.27"
 ELECTRON_FILE_NAME = f"electron-v{ELECTRON_VERSION}-linux-{ARCH}.zip"
 ELECTRON_DOWNLOAD_LINK = f"https://github.com/electron/electron/releases/download/v{ELECTRON_VERSION}/{ELECTRON_FILE_NAME}"
 
