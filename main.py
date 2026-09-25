@@ -339,7 +339,13 @@ def build_zimage(app_source_dir):
         } else {
             os = 'darwin_x64';
         }
-    }
+    } else if (process.platform === 'linux') {
+        if (process.arch === 'arm64') {
+            os = 'linux_arm64';
+        } else {
+            os = 'linux_x64';
+        }
+    } 
 }"""
 
     source, count = pattern.subn(replacement, source, count=1)
