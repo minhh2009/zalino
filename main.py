@@ -24,7 +24,6 @@ SQLITE3_VERSION = "6.0.1"
 SQLITE3_FILE_NAME = f"sqlite3-v{SQLITE3_VERSION}-napi-v6-linux-{ARCH}.tar.gz"
 SQLITE3_DOWNLOAD_LINK =  f"https://github.com/TryGhost/node-sqlite3/releases/download/v{SQLITE3_VERSION}/{SQLITE3_FILE_NAME}"
 
-DB_CROSS_DIR = "db-cross-build"
 headers = {
     "User-Agent": (
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Safari/537.36"
@@ -289,7 +288,7 @@ def install_native_sqlite3(sqlite3_extract_path,app_source_dir):
 
 def build_db_cross_v4(app_source_dir):
     run_command(["./db-cross-build/build.sh", ELECTRON_VERSION, ARCH])
-    db_cross_build_dir = os.path.join(DB_CROSS_DIR, "build", "Release")
+    db_cross_build_dir = os.path.join("db-cross-build", "build", "Release")
     db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "db-cross-v4")
     db_cross_native_node_dir = os.path.join(db_cross_lib_dir, "prebuilt", "linux", "electron", ARCH)
     os.makedirs(db_cross_native_node_dir)
@@ -314,6 +313,43 @@ else {
     }
 }
 module.exports = addon;""")
+
+def build_zimage(app_source_dir):
+    run_command(["./zimage-build/build.sh", ELECTRON_VERSION, ARCH])
+    db_cross_build_dir = os.path.join("zimage-build", "build", "Release")
+    db_cross_lib_dir = os.path.join(app_source_dir, "native", "nativelibs", "zimage")
+    db_cross_native_node_dir = os.path.join(db_cross_lib_dir, f"linux-{ARCH}")
+    os.makedirs(db_cross_native_node_dir)
+    shutil.copy2(os.path.join(db_cross_build_dir, "zimage.node"), db_cross_native_node_dir)
+
+    path = Path(db_cross_lib_dir) / "index.js"
+    source = path.read_text(encoding="utf-8")
+
+    pattern = re.compile(
+        r"function\s+getOS\s*\(\s*\)\s*\{.*?\n\}",
+        re.DOTALL
+    )
+
+    replacement = """function getOS() {
+    if (process.platform === 'win32') {
+        os = 'ia32';
+    } else if (process.platform === 'darwin') {
+        if (process.arch === 'arm64') {
+            os = 'darwin_arm64';
+        } else {
+            os = 'darwin_x64';
+        }
+    }
+}"""
+
+    source, count = pattern.subn(replacement, source, count=1)
+
+    if count == 0:
+        raise RuntimeError("getOS() not found")
+
+    path.write_text(source, encoding="utf-8")
+    print(f"[*] Patched {path}")
+
 
 def patch_windows_titlebar(app_source_dir):
     pc_dist = Path(app_source_dir) / "pc-dist"
@@ -452,6 +488,7 @@ def main():
     patch_windows_titlebar(app_source_dir)
     install_native_sqlite3(sqlite3_dir, app_source_dir)
     build_db_cross_v4(app_source_dir)
+    build_zimage(app_source_dir)
 
     output_asar = os.path.join(electron_res,"app.asar")
 
